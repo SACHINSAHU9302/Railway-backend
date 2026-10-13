@@ -39,7 +39,6 @@ class PlatformAdmin(admin.ModelAdmin):
         "accessibility",
     )
 
-
 @admin.register(Facility)
 class FacilityAdmin(admin.ModelAdmin):
 
@@ -61,7 +60,6 @@ class FacilityAdmin(admin.ModelAdmin):
         "station__station_name",
     )
 
-
 @admin.register(Train)
 class TrainAdmin(admin.ModelAdmin):
 
@@ -72,7 +70,6 @@ class TrainAdmin(admin.ModelAdmin):
         "destination",
         "active",
     )
-
     search_fields = (
         "train_number",
         "train_name",
