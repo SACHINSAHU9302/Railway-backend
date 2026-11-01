@@ -1,81 +1,331 @@
+import logging
+from .database import get_station_answer
 from .retriever import get_retriever
 from .llm import get_llm
 from .prompt import create_prompt
 
 
-def ask_rag(question):
-    question = question.strip()
+# ============================================================
+# LOGGER CONFIGURATION
+# ============================================================
 
-    # Validate the question
-    if not question:
-        return {
-            "answer": "Please enter a question.",
-            "sources": [],
-        }
+logger = logging.getLogger(__name__)
 
-    # Retrieve relevant documents from Chroma Cloud
-    retriever = get_retriever()
-    documents = retriever.invoke(question)
 
-    # Handle missing documents
-    if not documents:
-        return {
-            "answer": (
-                "I could not find this information "
-                "in the RailVision knowledge base."
-            ),
-            "sources": [],
-        }
+# ============================================================
+# HELPER FUNCTION: CONVERT RESPONSE INTO TEXT
+# ============================================================
 
-    # Prepare context and collect source information
-    context_parts = []
+def extract_answer_text(content):
+
+    # Normal string response
+    if isinstance(content, str):
+        return content.strip()
+
+    # Gemini content blocks
+    if isinstance(content, list):
+
+        text_parts = []
+
+        for item in content:
+
+            if isinstance(item, str):
+                text_parts.append(item)
+
+            elif isinstance(item, dict):
+
+                if item.get("type") == "text":
+                    text_parts.append(
+                        item.get("text", "")
+                    )
+
+        return "\n".join(text_parts).strip()
+
+    # Other response formats
+    return str(content).strip()
+
+
+# ============================================================
+# HELPER FUNCTION: EXTRACT DOCUMENT SOURCES
+# ============================================================
+
+def extract_sources(documents):
+
     sources = []
     seen_sources = set()
 
     for doc in documents:
-        context_parts.append(doc.page_content)
 
         metadata = doc.metadata or {}
+
         source = metadata.get("source", "")
 
-        if source and source not in seen_sources:
-            seen_sources.add(source)
+        if not source:
+            continue
 
-            sources.append({
-                "source": source,
-                "title": metadata.get("title", ""),
-                "category": metadata.get("category", ""),
-                "source_url": metadata.get("source_url", ""),
-                "effective_date": metadata.get(
-                    "effective_date", "unknown"
+        source = str(source)
+
+        if source in seen_sources:
+            continue
+
+        seen_sources.add(source)
+
+        sources.append({
+
+            "source": source,
+
+            "title": str(
+                metadata.get("title", "")
+            ),
+
+            "category": str(
+                metadata.get("category", "")
+            ),
+
+            "source_url": str(
+                metadata.get("source_url", "")
+            ),
+
+            "effective_date": str(
+                metadata.get("effective_date", "unknown")
+            ),
+
+        })
+
+    return sources
+
+
+# ============================================================
+# MAIN RAG FUNCTION
+# ============================================================
+
+def ask_rag(question):
+
+    # --------------------------------------------------------
+    # 1. VALIDATE QUESTION
+    # --------------------------------------------------------
+
+    if not isinstance(question, str) or not question.strip():
+
+        return {
+            "answer": "Please enter a valid question.",
+            "sources": [],
+        }
+
+    question = question.strip()
+
+    try:
+
+        logger.info("====================================")
+        logger.info("RAILVISION RAG STARTED")
+        logger.info("QUESTION: %s", question)
+
+        # =========================================
+        # CHECK DJANGO DATABASE FIRST
+        # =========================================
+
+        database_answer = get_station_answer(question)
+
+        if database_answer:
+
+            logger.info("Answer generated using Django database.")
+
+            return {
+                "answer": database_answer,
+                "sources": [
+                    {
+                        "source": "Django Station Database",
+                        "title": "Station, Platform and Facility Records",
+                        "category": "Station Information",
+                        "source_url": "",
+                        "effective_date": "Database records",
+                    }
+                ],
+            }
+
+        # =========================================
+        # EXISTING CHROMA RAG CODE
+        # =========================================
+
+        # ----------------------------------------------------
+        # 2. GET RETRIEVER
+        # ----------------------------------------------------
+
+        retriever = get_retriever()
+
+        if retriever is None:
+            raise ValueError("Retriever initialization failed.")
+
+        # ----------------------------------------------------
+        # 3. RETRIEVE RELEVANT DOCUMENTS
+        # ----------------------------------------------------
+
+        documents = retriever.invoke(question)
+
+        logger.info(
+            "RETRIEVED DOCUMENT COUNT: %s",
+            len(documents)
+        )
+
+        # ----------------------------------------------------
+        # 4. DEBUG RETRIEVED DOCUMENTS
+        # ----------------------------------------------------
+
+        for index, doc in enumerate(documents):
+
+            logger.info(
+                "DOCUMENT NUMBER: %s",
+                index + 1
+            )
+
+            logger.info(
+                "DOCUMENT CONTENT: %s",
+                doc.page_content
+            )
+
+            logger.info(
+                "DOCUMENT METADATA: %s",
+                doc.metadata
+            )
+
+        # ----------------------------------------------------
+        # 5. HANDLE NO DOCUMENTS
+        # ----------------------------------------------------
+
+        if not documents:
+
+            logger.warning(
+                "No relevant documents found."
+            )
+
+            return {
+                "answer": (
+                    "I could not find this information "
+                    "in the RailVision knowledge base."
                 ),
-            })
+                "sources": [],
+            }
 
-    # Combine retrieved documents into context
-    context = "\n\n".join(context_parts)
+        # ----------------------------------------------------
+        # 6. PREPARE CONTEXT
+        # ----------------------------------------------------
 
-    # Create prompt and generate the answer
-    prompt = create_prompt(question, context)
-    response = get_llm().invoke(prompt)
+        context_parts = []
 
-    answer = response.content
+        for doc in documents:
 
-    # Convert Gemini content blocks into plain text
-    if isinstance(answer, list):
-        text_parts = []
+            if doc.page_content:
 
-        for item in answer:
-            if isinstance(item, dict) and item.get("type") == "text":
-                text_parts.append(item.get("text", ""))
+                context_parts.append(
+                    doc.page_content
+                )
 
-        answer = "\n".join(text_parts)
+        context = "\n\n".join(context_parts)
 
-    # Ensure answer is a string
-    if not isinstance(answer, str):
-        answer = str(answer)
+        # ----------------------------------------------------
+        # 7. EXTRACT SOURCES
+        # ----------------------------------------------------
 
-    # Return answer and source documents
-    return {
-        "answer": answer,
-        "sources": sources,
-    }
+        sources = extract_sources(documents)
+
+        # ----------------------------------------------------
+        # 8. VALIDATE CONTEXT
+        # ----------------------------------------------------
+
+        if not context.strip():
+
+            logger.warning(
+                "Retrieved documents have empty content."
+            )
+
+            return {
+                "answer": (
+                    "Retrieved documents contain no readable content."
+                ),
+                "sources": sources,
+            }
+
+        logger.info(
+            "CONTEXT LENGTH: %s",
+            len(context)
+        )
+
+        # ----------------------------------------------------
+        # 9. CREATE PROMPT
+        # ----------------------------------------------------
+
+        prompt = create_prompt(
+            question,
+            context
+        )
+
+        # ----------------------------------------------------
+        # 10. GET GEMINI LLM
+        # ----------------------------------------------------
+
+        llm = get_llm()
+
+        if llm is None:
+            raise ValueError("LLM initialization failed.")
+
+        # ----------------------------------------------------
+        # 11. GENERATE ANSWER
+        # ----------------------------------------------------
+
+        response = llm.invoke(prompt)
+
+        # ----------------------------------------------------
+        # 12. EXTRACT ANSWER
+        # ----------------------------------------------------
+
+        answer = extract_answer_text(
+            response.content
+        )
+
+        if not answer:
+
+            answer = (
+                "I could not generate an answer. "
+                "Please try again."
+            )
+
+        # ----------------------------------------------------
+        # 13. FINAL DEBUG
+        # ----------------------------------------------------
+
+        logger.info(
+            "GENERATED ANSWER: %s",
+            answer
+        )
+
+        logger.info(
+            "SOURCE COUNT: %s",
+            len(sources)
+        )
+
+        logger.info("RAILVISION RAG COMPLETED")
+        logger.info("====================================")
+
+        # ----------------------------------------------------
+        # 14. RETURN FINAL RESULT
+        # ----------------------------------------------------
+
+        return {
+
+            "answer": answer,
+
+            "sources": sources,
+
+        }
+
+    # --------------------------------------------------------
+    # 15. ERROR HANDLING
+    # --------------------------------------------------------
+
+    except Exception:
+
+        logger.exception(
+            "RailVision RAG processing failed."
+        )
+
+        raise

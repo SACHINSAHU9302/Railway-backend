@@ -1,4 +1,3 @@
-
 from django.urls import path
 from .views import (
     user_profile,
@@ -16,20 +15,24 @@ from .views import (
     admin_document_detail,
     verify_railway_document,
 )
-from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView  # type: ignore[import-not-found]
 from .views import (
+
     document_list,
     rag_query,
     station_detail,
     station_list,
     facility_list,
+
     RegisterView,
     admin_dashboard_stats,
+    ticket_scanner_health,
+    extract_ticket,
+    validate_ticket_pnr,
 )
 
-
 from .serializers import EmailTokenObtainPairSerializer
-
 
 urlpatterns = [
         # ========================================================
@@ -171,24 +174,29 @@ path(
     ),
 
     # Facility Finder
-    path(
-        "facilities/",
-        facility_list,
-        name="facility_list",
-    ),
-
-    # Documents
-    path(
-        "documents/",
-        document_list,
-        name="document_list",
-    ),
-
-    # RAG Query
-    path(
-        "rag/query/",
-        rag_query,
-        name="rag_query",
-    ),
+    path("facilities/", facility_list, name="facility_list"),
+     path("documents/", document_list, name="document_list"),
+     # Ticket Scanner
+path(
+    "ticket/health/",
+    ticket_scanner_health,
+    name="ticket_scanner_health",
+),
+path(
+    "ticket/extract/",
+    extract_ticket,
+    name="extract_ticket",
+),
+path(
+    "ticket/pnr/",
+    validate_ticket_pnr,
+    name="validate_ticket_pnr",
+),
+# RAG Voice Assistant
+path(
+    "rag/query/",
+    rag_query,
+    name="rag_query"
+),
 ]
 

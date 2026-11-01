@@ -7,9 +7,11 @@ def get_retriever():
     vectorstore = get_vectorstore()
 
     retriever = vectorstore.as_retriever(
-        search_type="similarity",
+        search_type="mmr",
         search_kwargs={
-            "k": TOP_K
+            "k": TOP_K,
+            "fetch_k": 20,
+            "lambda_mult": 0.7
         }
     )
 
